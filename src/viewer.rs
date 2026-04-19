@@ -6,6 +6,7 @@ use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::Resize;
 use std::path::Path;
 
+#[derive(Clone)]
 pub struct ImageViewer {
     picker: Picker,
     original_image: DynamicImage,
@@ -16,7 +17,7 @@ impl ImageViewer {
         let original_image = image::open(path)
             .with_context(|| format!("Failed to open image: {}", path.display()))?;
 
-        let picker = Picker::from_fontsize((8, 16));
+        let picker = Picker::halfblocks();
 
         Ok(Self {
             picker,
@@ -71,10 +72,6 @@ impl ImageViewer {
     ) -> DynamicImage {
         let (orig_w, orig_h) = (self.original_image.width(), self.original_image.height());
 
-        if scale == 1.0 && offset_x == 0 && offset_y == 0 {
-            return self.original_image.clone();
-        }
-
         let font_size = self.picker.font_size();
         let cell_w = font_size.0 as u32;
         let cell_h = font_size.1 as u32;
@@ -82,35 +79,72 @@ impl ImageViewer {
         let view_width_px = (area.width as u32 * cell_w).max(1);
         let view_height_px = (area.height as u32 * cell_h).max(1);
 
-        let scaled_w = ((orig_w as f32) * scale).max(1.0) as u32;
-        let scaled_h = ((orig_h as f32) * scale).max(1.0) as u32;
-
-        let resized: DynamicImage = if scaled_w != orig_w || scaled_h != orig_h {
-            DynamicImage::ImageRgba8(imageops::resize(
-                &self.original_image,
-                scaled_w,
-                scaled_h,
-                imageops::FilterType::Lanczos3,
-            ))
-        } else {
-            self.original_image.clone()
-        };
-
-        let crop_x = offset_x.clamp(0, scaled_w.saturating_sub(1) as i32) as u32;
-        let crop_y = offset_y.clamp(0, scaled_h.saturating_sub(1) as i32) as u32;
-        let crop_w = view_width_px.min(scaled_w.saturating_sub(crop_x));
-        let crop_h = view_height_px.min(scaled_h.saturating_sub(crop_y));
-
-        if crop_w == 0 || crop_h == 0 {
-            return resized;
+        // Fast path: no scale, no offset, image fits in view — return a clone
+        if scale == 1.0 && offset_x == 0 && offset_y == 0 && orig_w <= view_width_px && orig_h <= view_height_px {
+            return self.original_image.clone();
         }
 
-        if crop_w == scaled_w && crop_h == scaled_h && crop_x == 0 && crop_y == 0 {
-            return resized;
+        // Calculate the region of the original image that the viewport needs.
+        // The viewport shows `view_width_px` pixels at `scale`, which maps to
+        // `view_width_px / scale` pixels in the original image.
+        let offset_x_px = (offset_x.max(0) as f32) * cell_w as f32;
+        let offset_y_px = (offset_y.max(0) as f32) * cell_h as f32;
+
+        let src_x = (offset_x_px / scale)
+            .min(orig_w.saturating_sub(1) as f32) as u32;
+        let src_y = (offset_y_px / scale)
+            .min(orig_h.saturating_sub(1) as f32) as u32;
+
+        let src_w = ((view_width_px as f32 / scale).ceil() as u32)
+            .min(orig_w.saturating_sub(src_x))
+            .max(1);
+        let src_h = ((view_height_px as f32 / scale).ceil() as u32)
+            .min(orig_h.saturating_sub(src_y))
+            .max(1);
+
+        // 1. Crop from the original image (O(src_w * src_h) instead of O(orig_w * orig_h)).
+        let cropped = imageops::crop_imm(&self.original_image, src_x, src_y, src_w, src_h);
+
+        // 2. Resize the cropped region to the viewport size.
+        let dst_w = (src_w as f32 * scale) as u32;
+        let dst_h = (src_h as f32 * scale) as u32;
+
+        let dst_w = dst_w.min(view_width_px).max(1);
+        let dst_h = dst_h.min(view_height_px).max(1);
+
+        if dst_w == src_w && dst_h == src_h {
+            return cropped.to_image().into();
         }
 
-        imageops::crop_imm(&resized, crop_x, crop_y, crop_w, crop_h)
-            .to_image()
-            .into()
+        let cropped_buffer = cropped.to_image();
+        DynamicImage::ImageRgba8(imageops::resize(
+            &cropped_buffer,
+            dst_w,
+            dst_h,
+            imageops::FilterType::Triangle,
+        ))
+    }
+
+    // Benchmark helpers — expose internals for latency measurement
+    pub fn scaled_image_for_bench(
+        &self,
+        scale: f32,
+        offset_x: i32,
+        offset_y: i32,
+        area: Rect,
+    ) -> DynamicImage {
+        self.scaled_image(scale, offset_x, offset_y, area)
+    }
+
+    pub fn create_protocol_from_image(&self, image: DynamicImage) -> StatefulProtocol {
+        self.picker.new_resize_protocol(image)
+    }
+
+    pub fn protocol_name(&self) -> String {
+        format!("{:?}", self.picker.protocol_type())
+    }
+
+    pub fn font_size(&self) -> (u16, u16) {
+        self.picker.font_size()
     }
 }

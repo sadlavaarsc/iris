@@ -1,5 +1,5 @@
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout},
+    layout::Alignment,
     style::{Color, Style},
     text::{Line, Span},
     widgets::Paragraph,
@@ -10,22 +10,23 @@ use ratatui_image::{Resize, StatefulImage};
 use crate::app::App;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(1)])
-        .split(f.area());
+    let term_area = f.area();
 
-    let main_area = chunks[0];
-    let status_area = chunks[1];
+    // Status bar at the bottom, full width
+    let status_y = term_area.height.saturating_sub(1);
+    let status_area = ratatui::layout::Rect::new(0, status_y, term_area.width, 1);
+
+    // Use the constrained image area from app
+    let image_area = app.image_area;
 
     if let Some(ref mut state) = app.image_state {
         let image = StatefulImage::default().resize(Resize::Fit(None));
-        f.render_stateful_widget(image, main_area, state);
+        f.render_stateful_widget(image, image_area, state);
     } else {
         let msg = Paragraph::new("Loading image...")
             .alignment(Alignment::Center)
             .style(Style::default().fg(Color::Yellow));
-        f.render_widget(msg, main_area);
+        f.render_widget(msg, image_area);
     }
 
     let status_spans = vec![

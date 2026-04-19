@@ -6,10 +6,13 @@ A terminal image viewer written in Rust, with support for Kitty graphics protoco
 
 - **Kitty Graphics Protocol** - Native support for high-quality terminal image rendering
 - **Auto Fallback** - Automatically falls back to iTerm2, Sixel, or Unicode halfblocks depending on terminal capabilities
+- **Kitty Graphics Protocol** - Native support for high-quality terminal image rendering
+- **Auto Fallback** - Automatically falls back to iTerm2, Sixel, or Unicode halfblocks depending on terminal capabilities
 - **Interactive Mode** - Full TUI with zoom, pan, and mouse support
 - **Static Mode** - Quick one-shot image display without entering interactive mode
 - **Keyboard Controls** - Vim-style (`hjkl`) and arrow key navigation
 - **Mouse Support** - Scroll to zoom in/out
+- **Performance Optimized** - Crop-before-resize, background worker thread, input debouncing
 
 ## Installation
 
@@ -41,9 +44,11 @@ iris path/to/image.png --no-interactive
 |-----|--------|
 | `+` / `=` | Zoom in |
 | `-` / `_` | Zoom out |
-| `←` `↑` `↓` `→` | Pan |
-| `h` `j` `k` `l` | Pan (vim-style) |
-| `w` `a` `s` `d` | Pan |
+| `←` `↑` `↓` `→` | Pan (1 cell) |
+| `h` `j` `k` `l` | Pan (1 cell, vim-style) |
+| `w` `a` `s` `d` | Pan (1 cell) |
+| `Shift` + arrow / `HJKL` / `WASD` | Pan (5 cells, fast) |
+| `Ctrl` + `0` | Reset view |
 | `r` | Reset view |
 | `q` / `Esc` | Quit |
 
@@ -64,6 +69,16 @@ Iris uses [ratatui-image](https://github.com/benjajaja/ratatui-image) for protoc
 | iTerm2 | iTerm2, WezTerm |
 | Sixel | XTerm, MLTerm, mintty |
 | Halfblocks | Any truecolor terminal (fallback) |
+
+## Performance
+
+Iris uses several strategies to keep interactive mode responsive even with large images:
+
+- **Crop-before-resize** - Only processes the visible viewport region instead of the full image
+- **Background worker thread** - Heavy image processing (`crop` + `resize` + `protocol encode`) runs off the main thread via `std::sync::mpsc`
+- **Input debouncing** - 75ms debounce on scroll/keyboard events so rapid inputs only trigger one update
+- **Constrained render area** - Image is rendered in a centered sub-region (60% width × 75% height) to reduce Kitty/Sixel protocol transmission overhead
+- **Triangle filter** - Fast resizing filter (instead of Lanczos3) for interactive use
 
 ## Tech Stack
 

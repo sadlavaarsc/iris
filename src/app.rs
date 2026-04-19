@@ -1,3 +1,4 @@
+use ratatui::layout::Rect;
 use ratatui_image::protocol::StatefulProtocol;
 
 pub struct App {
@@ -5,10 +6,20 @@ pub struct App {
     pub offset_x: i32,
     pub offset_y: i32,
     pub image_state: Option<StatefulProtocol>,
+    #[allow(dead_code)]
     pub original_width: u32,
+    #[allow(dead_code)]
     pub original_height: u32,
     pub should_quit: bool,
     pub status_message: String,
+    // Cache of last parameters used to create image_state
+    pub last_scale: f32,
+    pub last_offset_x: i32,
+    pub last_offset_y: i32,
+    pub last_area: Rect,
+    pub has_pending_work: bool,
+    /// The actual area where the image is rendered (may be smaller than terminal)
+    pub image_area: Rect,
 }
 
 impl App {
@@ -22,6 +33,12 @@ impl App {
             original_height,
             should_quit: false,
             status_message: String::new(),
+            last_scale: 1.0,
+            last_offset_x: 0,
+            last_offset_y: 0,
+            last_area: Rect::default(),
+            has_pending_work: false,
+            image_area: Rect::default(),
         }
     }
 
@@ -49,7 +66,7 @@ impl App {
 
     fn update_status(&mut self) {
         self.status_message = format!(
-            "Scale: {:.0}% | Offset: ({}, {})",
+            "Scale: {:.0}% | Offset: ({}, {}) cells",
             self.scale * 100.0,
             self.offset_x,
             self.offset_y

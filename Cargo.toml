@@ -2,11 +2,21 @@
 name = "iris"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
 default-run = "iris"
-description = "A terminal image viewer with Kitty protocol support"
+description = "A terminal image viewer with Kitty protocol support and automatic fallback"
 authors = ["Wentao Li <lwt@dreamriver.art>"]
 license = "MIT"
-repository = "https://github.com/lwt-zh/iris"
+repository = "https://github.com/sadlavaarsc/iris"
+readme = "README.md"
+keywords = ["terminal", "image", "viewer", "tui", "kitty"]
+categories = ["command-line-utilities", "multimedia::images"]
+exclude = [
+    "assets/",
+    ".DS_Store",
+    "PERFORMANCE_AUDIT.md",
+    ".claude/",
+]
 
 [dependencies]
 ratatui = "0.30"

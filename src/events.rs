@@ -1,4 +1,6 @@
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use std::path::Path;
+
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::app::App;
 
@@ -27,6 +29,14 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         }
         KeyCode::Char('r') | KeyCode::Char('R') => {
             app.reset_view();
+            true
+        }
+        KeyCode::Char('o') | KeyCode::Char('O') => {
+            if let Err(e) = open_with_default(&app.image_path) {
+                app.set_status(format!("Open failed: {}", e));
+            } else {
+                app.set_status("Opened with default viewer".to_string());
+            }
             true
         }
         KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('w') => {
@@ -71,14 +81,80 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
 
 fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            app.drag_last_col = Some(mouse.column);
+            app.drag_last_row = Some(mouse.row);
+            false
+        }
+        MouseEventKind::Drag(MouseButton::Left) => {
+            if let (Some(last_col), Some(last_row)) = (app.drag_last_col, app.drag_last_row) {
+                let dx = mouse.column as i32 - last_col as i32;
+                let dy = mouse.row as i32 - last_row as i32;
+                app.pan(-dx, -dy);
+                app.drag_last_col = Some(mouse.column);
+                app.drag_last_row = Some(mouse.row);
+                true
+            } else {
+                false
+            }
+        }
+        MouseEventKind::Up(MouseButton::Left) => {
+            app.drag_last_col = None;
+            app.drag_last_row = None;
+            false
+        }
         MouseEventKind::ScrollUp => {
-            app.zoom_in();
+            if mouse.modifiers.contains(KeyModifiers::SHIFT) {
+                app.pan(-3, 0);
+            } else {
+                app.zoom_in();
+            }
             true
         }
         MouseEventKind::ScrollDown => {
-            app.zoom_out();
+            if mouse.modifiers.contains(KeyModifiers::SHIFT) {
+                app.pan(3, 0);
+            } else {
+                app.zoom_out();
+            }
+            true
+        }
+        MouseEventKind::ScrollLeft => {
+            app.pan(-3, 0);
+            true
+        }
+        MouseEventKind::ScrollRight => {
+            app.pan(3, 0);
             true
         }
         _ => false,
+    }
+}
+
+/// Open a file with the system's default application.
+fn open_with_default(path: &Path) -> std::io::Result<std::process::Child> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open").arg(path).spawn()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open").arg(path).spawn()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("start")
+            .arg("")
+            .arg(path)
+            .spawn()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "opening with default viewer is not supported on this platform",
+        ))
     }
 }

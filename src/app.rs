@@ -20,12 +20,20 @@ pub struct App {
     pub has_pending_work: bool,
     /// The actual area where the image is rendered (may be smaller than terminal)
     pub image_area: Rect,
+    pub debug: bool,
+    /// Last known drag position for mouse panning
+    pub drag_last_col: Option<u16>,
+    pub drag_last_row: Option<u16>,
+    /// Scale used on first load / after reset (fit-to-area)
+    pub initial_scale: f32,
+    pub filename: String,
+    pub image_path: std::path::PathBuf,
 }
 
 impl App {
-    pub fn new(original_width: u32, original_height: u32) -> Self {
+    pub fn new(original_width: u32, original_height: u32, debug: bool, initial_scale: f32, filename: impl Into<String>, image_path: std::path::PathBuf) -> Self {
         Self {
-            scale: 1.0,
+            scale: initial_scale,
             offset_x: 0,
             offset_y: 0,
             image_state: None,
@@ -33,12 +41,18 @@ impl App {
             original_height,
             should_quit: false,
             status_message: String::new(),
-            last_scale: 1.0,
+            last_scale: initial_scale,
             last_offset_x: 0,
             last_offset_y: 0,
             last_area: Rect::default(),
             has_pending_work: false,
             image_area: Rect::default(),
+            debug,
+            drag_last_col: None,
+            drag_last_row: None,
+            initial_scale,
+            filename: filename.into(),
+            image_path,
         }
     }
 
@@ -58,7 +72,7 @@ impl App {
     }
 
     pub fn reset_view(&mut self) {
-        self.scale = 1.0;
+        self.scale = self.initial_scale;
         self.offset_x = 0;
         self.offset_y = 0;
         self.update_status();

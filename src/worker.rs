@@ -27,7 +27,7 @@ pub struct ImageWorker {
 }
 
 impl ImageWorker {
-    pub fn new(viewer: ImageViewer) -> Self {
+    pub fn new(viewer: ImageViewer, debug: bool) -> Self {
         let (work_tx, work_rx) = channel::<ImageWork>();
         let (result_tx, result_rx) = channel::<ImageResult>();
 
@@ -50,14 +50,16 @@ impl ImageWorker {
                         match viewer.create_stateful(scale, offset_x, offset_y, area) {
                             Ok(protocol) => {
                                 let work_ms = work_start.elapsed().as_secs_f64() * 1000.0;
-                                if work_ms > 1.0 {
+                                if debug && work_ms > 1.0 {
                                     eprintln!("[IRIS-BENCH] worker-thread  scale={:.1}x  area={}x{}  took={:.2}ms", scale, area.width, area.height, work_ms);
                                 }
                                 let _ = result_tx.send(ImageResult::Ready(protocol));
                             }
                             Err(e) => {
                                 let work_ms = work_start.elapsed().as_secs_f64() * 1000.0;
-                                eprintln!("[IRIS-BENCH] worker-thread  scale={:.1}x  area={}x{}  ERROR took={:.2}ms err={}", scale, area.width, area.height, work_ms, e);
+                                if debug {
+                                    eprintln!("[IRIS-BENCH] worker-thread  scale={:.1}x  area={}x{}  ERROR took={:.2}ms err={}", scale, area.width, area.height, work_ms, e);
+                                }
                                 let _ = result_tx.send(ImageResult::Error(e.to_string()));
                             }
                         }

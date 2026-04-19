@@ -112,17 +112,29 @@ impl ImageViewer {
         let dst_w = dst_w.min(view_width_px).max(1);
         let dst_h = dst_h.min(view_height_px).max(1);
 
-        if dst_w == src_w && dst_h == src_h {
-            return cropped.to_image().into();
+        let cropped_buffer = cropped.to_image();
+
+        let resized = if dst_w == src_w && dst_h == src_h {
+            cropped_buffer
+        } else {
+            imageops::resize(&cropped_buffer, dst_w, dst_h, imageops::FilterType::Triangle)
+        };
+
+        // If the resized image is smaller than the viewport, pad it so that
+        // the content is centered in the render area.
+        if dst_w < view_width_px || dst_h < view_height_px {
+            let mut padded = image::RgbaImage::from_pixel(
+                view_width_px,
+                view_height_px,
+                image::Rgba([0, 0, 0, 0]),
+            );
+            let px = (view_width_px - dst_w) / 2;
+            let py = (view_height_px - dst_h) / 2;
+            imageops::overlay(&mut padded, &resized, px as i64, py as i64);
+            return DynamicImage::ImageRgba8(padded);
         }
 
-        let cropped_buffer = cropped.to_image();
-        DynamicImage::ImageRgba8(imageops::resize(
-            &cropped_buffer,
-            dst_w,
-            dst_h,
-            imageops::FilterType::Triangle,
-        ))
+        DynamicImage::ImageRgba8(resized)
     }
 
     // Benchmark helpers — expose internals for latency measurement
@@ -146,5 +158,19 @@ impl ImageViewer {
 
     pub fn font_size(&self) -> (u16, u16) {
         self.picker.font_size()
+    }
+
+    /// Compute a scale that fits the entire image inside the given area,
+    /// preserving aspect ratio.  Images smaller than the viewport are not
+    /// enlarged (scale is capped at 1.0).
+    pub fn fit_scale(&self, area: Rect) -> f32 {
+        let (orig_w, orig_h) = self.original_size();
+        let font_size = self.picker.font_size();
+        let view_w = (area.width as u32 * font_size.0 as u32).max(1);
+        let view_h = (area.height as u32 * font_size.1 as u32).max(1);
+
+        let scale_x = view_w as f32 / orig_w as f32;
+        let scale_y = view_h as f32 / orig_h as f32;
+        scale_x.min(scale_y).min(1.0)
     }
 }

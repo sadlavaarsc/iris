@@ -10,6 +10,7 @@ use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
 
 use iris::{
     app::App,
+    browser,
     cli::Args,
     events,
     ui,
@@ -20,13 +21,56 @@ use iris::{
 fn main() -> Result<()> {
     let args = Args::parse();
 
+    let path = match args.path {
+        Some(ref p) if p.is_file() => p.clone(),
+        Some(ref p) if p.is_dir() => {
+            let selected = run_browser_in_dir(p)?;
+            match selected {
+                Some(s) => s,
+                None => return Ok(()),
+            }
+        }
+        Some(ref p) => {
+            eprintln!("iris: '{}' is not a valid file or directory", p.display());
+            std::process::exit(1);
+        }
+        None => {
+            let selected = run_browser_in_dir(std::env::current_dir()?.as_path())?;
+            match selected {
+                Some(s) => s,
+                None => return Ok(()),
+            }
+        }
+    };
+
     if args.no_interactive {
-        run_static(&args.path)?;
+        run_static(&path)?;
     } else {
-        run_interactive(&args.path)?;
+        run_interactive(&path, args.debug)?;
     }
 
     Ok(())
+}
+
+fn run_browser_in_dir(dir: &std::path::Path) -> Result<Option<std::path::PathBuf>> {
+    terminal::enable_raw_mode()?;
+    let mut stdout = std::io::stdout();
+    crossterm::execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    let result = browser::run_browser(&mut terminal, dir);
+
+    terminal::disable_raw_mode()?;
+    crossterm::execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
+    terminal.show_cursor()?;
+
+    result
 }
 
 fn run_static(path: &std::path::Path) -> Result<()> {
@@ -53,7 +97,7 @@ fn run_static(path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-fn run_interactive(path: &std::path::Path) -> Result<()> {
+fn run_interactive(path: &std::path::Path, debug: bool) -> Result<()> {
     let viewer = ImageViewer::new(path)?;
     let (orig_w, orig_h) = viewer.original_size();
 
@@ -63,23 +107,32 @@ fn run_interactive(path: &std::path::Path) -> Result<()> {
 
     let viewer = viewer.query_stdio();
 
-    eprintln!("[IRIS-BENCH] Protocol: {}", viewer.protocol_name());
-    eprintln!("[IRIS-BENCH] Image: {}x{}", orig_w, orig_h);
-    eprintln!("[IRIS-BENCH] FontSize: {:?}", viewer.font_size());
-    eprintln!("[IRIS-BENCH] === START ===");
+    if debug {
+        eprintln!("[IRIS-BENCH] Protocol: {}", viewer.protocol_name());
+        eprintln!("[IRIS-BENCH] Image: {}x{}", orig_w, orig_h);
+        eprintln!("[IRIS-BENCH] FontSize: {:?}", viewer.font_size());
+        eprintln!("[IRIS-BENCH] === START ===");
+    }
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new(orig_w, orig_h);
-    app.set_status(format!("{}x{}", orig_w, orig_h));
-
     let size = terminal.size()?;
     let term_area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
     let area = compute_image_area(term_area);
-    app.image_area = area;
 
-    let worker = ImageWorker::new(viewer);
+    let fit_scale = viewer.fit_scale(area);
+    let filename = path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    let mut app = App::new(orig_w, orig_h, debug, fit_scale, &filename, path.to_path_buf());
+    app.image_area = area;
+    app.set_status(format!(
+        "{}x{} | Fit {:.0}%",
+        orig_w,
+        orig_h,
+        fit_scale * 100.0
+    ));
+
+    let worker = ImageWorker::new(viewer, debug);
     worker.request(app.scale, app.offset_x, app.offset_y, area);
 
     let res = run_app(&mut terminal, &mut app, &worker);
@@ -96,20 +149,36 @@ fn run_interactive(path: &std::path::Path) -> Result<()> {
         eprintln!("Error: {}", err);
     }
 
-    eprintln!("[IRIS-BENCH] === END ===");
+    if debug {
+        eprintln!("[IRIS-BENCH] === END ===");
+    }
 
     Ok(())
 }
 
 /// Compute the image rendering area as a centered subset of the terminal.
-/// This limits the Kitty/Sixel transmission size while keeping the image visible.
+/// Ratio shrinks as terminal grows (save bandwidth on large terminals,
+/// use more space on small ones).
 fn compute_image_area(term: Rect) -> Rect {
-    // Use 60% of terminal width and 75% of terminal height (minus status bar)
-    let avail_h = term.height.saturating_sub(1);
-    let w = ((term.width as f32 * 0.6).ceil() as u16).max(10);
-    let h = ((avail_h as f32 * 0.75).ceil() as u16).max(5);
+    // Reserve 1 row for top info bar and 1 row for bottom hint bar
+    let avail_h = term.height.saturating_sub(2);
+
+    // Dynamic ratios based on terminal dimensions
+    let (w_ratio, h_ratio) = if term.width < 100 || avail_h < 30 {
+        // Small terminal → use more space so the image remains usable
+        (0.85, 0.85)
+    } else if term.width < 160 && avail_h < 50 {
+        // Medium terminal
+        (0.70, 0.75)
+    } else {
+        // Large terminal → smaller ratio to reduce protocol transmission
+        (0.55, 0.65)
+    };
+
+    let w = ((term.width as f32 * w_ratio).ceil() as u16).max(10);
+    let h = ((avail_h as f32 * h_ratio).ceil() as u16).max(5);
     let x = (term.width.saturating_sub(w)) / 2;
-    let y = (avail_h.saturating_sub(h)) / 2;
+    let y = 1 + (avail_h.saturating_sub(h)) / 2;
     Rect::new(x, y, w, h)
 }
 
@@ -143,13 +212,17 @@ fn run_app(
             match result {
                 ImageResult::Ready(protocol) => {
                     app.image_state = Some(protocol);
-                    if let Some(ms) = recv_elapsed {
-                        eprintln!("[IRIS-BENCH] worker-ready  e2e={:.2}ms", ms);
+                    if app.debug {
+                        if let Some(ms) = recv_elapsed {
+                            eprintln!("[IRIS-BENCH] worker-ready  e2e={:.2}ms", ms);
+                        }
                     }
                 }
                 ImageResult::Error(e) => {
-                    if let Some(ms) = recv_elapsed {
-                        eprintln!("[IRIS-BENCH] worker-error  e2e={:.2}ms err={}", ms, e);
+                    if app.debug {
+                        if let Some(ms) = recv_elapsed {
+                            eprintln!("[IRIS-BENCH] worker-error  e2e={:.2}ms err={}", ms, e);
+                        }
                     }
                     app.set_status(format!("Error: {}", e));
                 }
@@ -161,7 +234,7 @@ fn run_app(
         let draw_start = Instant::now();
         terminal.draw(|f| ui::draw(f, app))?;
         let draw_ms = draw_start.elapsed().as_secs_f64() * 1000.0;
-        if draw_ms > 1.0 {
+        if app.debug && draw_ms > 1.0 {
             eprintln!(
                 "[IRIS-BENCH] draw         area={}x{}  took={:.2}ms",
                 image_area.width, image_area.height, draw_ms
@@ -224,7 +297,7 @@ fn run_app(
         if changed || area_changed {
             last_image_area = image_area;
             pending_update = Some(Instant::now() + debounce);
-            if event_count > 1 || drain_ms > 1.0 {
+            if app.debug && (event_count > 1 || drain_ms > 1.0) {
                 eprintln!(
                     "[IRIS-BENCH] events       count={}  drain={:.2}ms",
                     event_count, drain_ms
@@ -233,7 +306,9 @@ fn run_app(
         }
     }
 
-    eprintln!("[IRIS-BENCH] frames={}", frame_count);
+    if app.debug {
+        eprintln!("[IRIS-BENCH] frames={}", frame_count);
+    }
 
     Ok(())
 }

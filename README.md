@@ -45,6 +45,14 @@ A terminal image viewer written in Rust, with support for Kitty graphics protoco
 
 ## Installation
 
+### From crates.io (requires Rust toolchain)
+
+```bash
+cargo install iris-viewer
+```
+
+The binary is installed as `iris`.
+
 ### From Source
 
 ```bash

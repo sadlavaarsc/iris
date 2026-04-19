@@ -8,7 +8,7 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
 
-use iris::{
+use iris_viewer::{
     app::App,
     browser,
     cli::Args,

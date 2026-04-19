@@ -1,6 +1,6 @@
-![Demo](./assets/demo.gif)
-
 <div align="center">
+
+<img src="./assets/demo.gif" alt="Demo" width="720">
 
 # Iris
 
